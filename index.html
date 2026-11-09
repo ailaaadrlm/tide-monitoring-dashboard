@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Monitoring Pasang Surut Air Laut</title>
+  <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen p-6">
+
+  <div class="max-w-6xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="bg-slate-800 p-5 rounded-2xl border border-slate-700 flex justify-between items-center">
+      <div>
+        <h1 class="text-2xl font-bold text-cyan-400">System Monitoring Pasang Surut</h1>
+        <p class="text-xs text-slate-400 mt-1">Stasiun Observasi IoT (ESP32 + JSN-SR04T)</p>
+      </div>
+      <span class="px-3 py-1 text-xs rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+        Live Dashboard
+      </span>
+    </div>
+
+    <!-- Cards Summary -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
+        <p class="text-slate-400 text-xs">Real-Time Sensor (JSN-SR04T)</p>
+        <h3 id="current-height" class="text-2xl font-bold text-cyan-400 mt-1">-- cm</h3>
+      </div>
+      <div class="bg-slate-800 p-4 rounded-xl border border-slate-700">
+        <p class="text-slate-400 text-xs">Prediksi (Harmonic/Colab)</p>
+        <h3 id="predicted-height" class="text-2xl font-bold text-amber-400 mt-1">-- cm</h3>
+      </div>
+    </div>
+
+    <!-- 1. GRAFIK GABUNGAN -->
+    <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+      <h2 class="text-lg font-semibold text-slate-200 mb-4">Grafik Komparasi (Real-Time vs Prediksi)</h2>
+      <div id="chart-combined"></div>
+    </div>
+
+    <!-- 2. GRAFIK TERPISAH (2 KOLOM) -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+        <h2 class="text-md font-semibold text-cyan-400 mb-4">Grafik Sensor Real-Time</h2>
+        <div id="chart-realtime"></div>
+      </div>
+      <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700">
+        <h2 class="text-md font-semibold text-amber-400 mb-4">Grafik Prediksi Pasang Surut</h2>
+        <div id="chart-prediction"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 1. Firebase Config
+    const firebaseConfig = {
+      databaseURL: "https://tide-monitoring-default-rtdb.asia-southeast1.firebasedatabase.app/"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
+    // 2. Setup Grafik Gabungan
+    var chartCombined = new ApexCharts(document.querySelector("#chart-combined"), {
+      chart: { type: 'line', height: 350, background: 'transparent' },
+      theme: { mode: 'dark' },
+      series: [
+        { name: 'Real-Time (ESP32)', data: [] },
+        { name: 'Prediksi (Colab)', data: [] }
+      ],
+      xaxis: { categories: [] },
+      colors: ['#06b6d4', '#f59e0b'],
+      stroke: { curve: 'smooth', width: [3, 2], dashArray: [0, 5] },
+      noData: { text: 'Memuat data dari Firebase...', style: { color: '#94a3b8' } }
+    });
+    chartCombined.render();
+
+    // 3. Setup Grafik Real-Time
+    var chartRealtime = new ApexCharts(document.querySelector("#chart-realtime"), {
+      chart: { type: 'line', height: 280, background: 'transparent' },
+      theme: { mode: 'dark' },
+      series: [{ name: 'Real-Time (cm)', data: [] }],
+      xaxis: { categories: [] },
+      colors: ['#06b6d4'],
+      stroke: { curve: 'smooth', width: 3 },
+      markers: { size: 3 },
+      noData: { text: 'Memuat data...', style: { color: '#94a3b8' } }
+    });
+    chartRealtime.render();
+
+    // 4. Setup Grafik Prediksi
+    var chartPrediction = new ApexCharts(document.querySelector("#chart-prediction"), {
+      chart: { type: 'line', height: 280, background: 'transparent' },
+      theme: { mode: 'dark' },
+      series: [{ name: 'Prediksi (cm)', data: [] }],
+      xaxis: { categories: [] },
+      colors: ['#f59e0b'],
+      stroke: { curve: 'smooth', width: 2, dashArray: 4 },
+      markers: { size: 3 },
+      noData: { text: 'Memuat data...', style: { color: '#94a3b8' } }
+    });
+    chartPrediction.render();
+
+    // 5. Stream Firebase Real-Time Data
+    database.ref('tide_data').on('value', (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+
+      const times = [];
+      const realTimeVals = [];
+      const predictedVals = [];
+
+      Object.keys(data).forEach(key => {
+        const item = data[key];
+        times.push(item.time || '');
+        realTimeVals.push(item.realtime !== undefined ? item.realtime : null);
+        predictedVals.push(item.prediction !== undefined ? item.prediction : null);
+      });
+
+      // Update ketiga grafik sekaligus
+      chartCombined.updateOptions({ xaxis: { categories: times } });
+      chartCombined.updateSeries([
+        { name: 'Real-Time (ESP32)', data: realTimeVals },
+        { name: 'Prediksi (Colab)', data: predictedVals }
+      ]);
+
+      chartRealtime.updateOptions({ xaxis: { categories: times } });
+      chartRealtime.updateSeries([{ name: 'Real-Time (cm)', data: realTimeVals }]);
+
+      chartPrediction.updateOptions({ xaxis: { categories: times } });
+      chartPrediction.updateSeries([{ name: 'Prediksi (cm)', data: predictedVals }]);
+
+      // Update Angka Ringkasan (Cards)
+      const validReal = realTimeVals.filter(v => v !== null);
+      if (validReal.length > 0) {
+        document.getElementById('current-height').innerText = validReal[validReal.length - 1] + ' cm';
+      }
+      if (predictedVals.length > 0) {
+        document.getElementById('predicted-height').innerText = predictedVals[predictedVals.length - 1] + ' cm';
+      }
+    });
+  </script>
+</body>
+</html>
